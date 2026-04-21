@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Transaction = require('../models/Transaction');
+const { Budget } = require('../models/Finance');
 const { protect } = require('../middleware/auth');
 
 // GET /api/transactions
@@ -41,6 +42,26 @@ router.get('/', protect, async (req, res) => {
 router.post('/', protect, async (req, res) => {
   try {
     const txn = await Transaction.create({ ...req.body, userId: req.user._id });
+
+    // ─── Update Budget Spent ──────────────────────────────────────
+    if (txn.type === 'expense') {
+      const txnDate = new Date(txn.date || Date.now());
+      const month = txnDate.getMonth() + 1;
+      const year = txnDate.getFullYear();
+
+      await Budget.findOneAndUpdate(
+        {
+          userId: req.user._id,
+          category: txn.category.toLowerCase(),
+          month,
+          year,
+          isActive: true
+        },
+        { $inc: { spent: Math.abs(txn.amount) } }
+      );
+    }
+    // ─────────────────────────────────────────────────────────────
+
     res.status(201).json({ success: true, message: 'Transaction added!', data: txn });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
@@ -67,6 +88,26 @@ router.delete('/:id', protect, async (req, res) => {
   try {
     const txn = await Transaction.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
     if (!txn) return res.status(404).json({ success: false, message: 'Transaction not found.' });
+
+    // ─── Reverse Budget Spent on Delete ──────────────────────────
+    if (txn.type === 'expense') {
+      const txnDate = new Date(txn.date || Date.now());
+      const month = txnDate.getMonth() + 1;
+      const year = txnDate.getFullYear();
+
+      await Budget.findOneAndUpdate(
+        {
+          userId: req.user._id,
+          category: txn.category.toLowerCase(),
+          month,
+          year,
+          isActive: true
+        },
+        { $inc: { spent: -Math.abs(txn.amount) } }
+      );
+    }
+    // ─────────────────────────────────────────────────────────────
+
     res.json({ success: true, message: 'Transaction deleted.' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
